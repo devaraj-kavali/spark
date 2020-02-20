@@ -19,6 +19,8 @@ package org.apache.spark.resource
 
 import java.util.concurrent.ConcurrentHashMap
 
+import collection.JavaConverters._
+
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.annotation.Evolving
 import org.apache.spark.internal.Logging
@@ -39,7 +41,13 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
   private val resourceProfileIdToResourceProfile =
     new ConcurrentHashMap[Int, ResourceProfile]()
 
+  private val rpIdToCompatibleRpId =
+    new ConcurrentHashMap[Int, ConcurrentHashMap[Int, Int]]()
+
   private val master = sparkConf.getOption("spark.master")
+
+  private val compatibleExecReuse = sparkConf.getBoolean(
+    "spark.resourceProfile.executorReuse", false)
 
   private val defaultProfile = ResourceProfile.getOrCreateDefaultProfile(sparkConf)
   addResourceProfile(defaultProfile)
@@ -74,6 +82,16 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
     if (wasPresent == null) {
       listenerBus.post(SparkListenerResourceProfileAdded(rp))
     }
+    rpIdToCompatibleRpId.put(rp.id, new ConcurrentHashMap[Int, Int]())
+    if (compatibleExecReuse) {
+      resourceProfileIdToResourceProfile.asScala.foreach(kv => {
+        if (resourceProfileIdToResourceProfile.get(kv._1)
+          .executorResourcesJMap.equals(rp.executorResourcesJMap)) {
+          rpIdToCompatibleRpId.get(kv._1).put(rp.id, 0)
+          rpIdToCompatibleRpId.get(rp.id).put(kv._1, 0)
+        }
+      })
+    }
   }
 
   /*
@@ -90,5 +108,16 @@ private[spark] class ResourceProfileManager(sparkConf: SparkConf,
 
   def taskCpusForProfileId(rpId: Int): Int = {
     resourceProfileFromId(rpId).getTaskCpus.getOrElse(taskCpusDefaultProfile)
+  }
+
+  /*
+   * Checks whether executors can reuse from one profile
+   * to other profile when the executor resource reqs are same/equal.
+   */
+  def compatibleForExecutorReuse(rpId1: Int, rpId2: Int): Boolean = {
+    logDebug("Checking to reuse executor for Resource Profile="
+      + rpId2 + " from Resource Profile=" + rpId2)
+    (compatibleExecReuse && rpIdToCompatibleRpId.containsKey(rpId1)
+      && rpIdToCompatibleRpId.get(rpId1).containsKey(rpId2))
   }
 }

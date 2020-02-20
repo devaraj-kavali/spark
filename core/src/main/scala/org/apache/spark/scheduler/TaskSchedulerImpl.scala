@@ -343,7 +343,10 @@ private[spark] class TaskSchedulerImpl(
       val taskSetRpID = taskSet.taskSet.resourceProfileId
       // make the resource profile id a hard requirement for now - ie only put tasksets
       // on executors where resource profile exactly matches.
-      if (taskSetRpID == shuffledOffers(i).resourceProfileId &&
+      if ((taskSetRpID == shuffledOffers(i).resourceProfileId ||
+        // check whether executor reuse enable for resource profiles and resource reqs matching
+        sc.resourceProfileManager.compatibleForExecutorReuse(
+          taskSetRpID, shuffledOffers(i).resourceProfileId)) &&
         resourcesMeetTaskRequirements(taskSet, availableCpus(i), availableResources(i),
           taskResAssignments)) {
         try {
